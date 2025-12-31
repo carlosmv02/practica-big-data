@@ -136,20 +136,20 @@ object MakePrediction {
     // Inspect the output
     finalPredictions.printSchema()
 
-    // define a streaming query
+    // define a streaming query for MongoDB
     val dataStreamWriter = finalPredictions
       .writeStream
       .format("mongodb")
       .option("spark.mongodb.connection.uri", "mongodb://127.0.0.1:27017")
       .option("spark.mongodb.database", "agile_data_science")
-      .option("checkpointLocation", "/tmp")
+      .option("checkpointLocation", "/tmp/spark_checkpoint_mongo")
       .option("spark.mongodb.collection", "flight_delay_ml_response")
       .outputMode("append")
 
-    // run the query
+    // run the query for MongoDB
     val query = dataStreamWriter.start()
+    
     // Console Output for predictions
-
     val consoleOutput = finalPredictions.writeStream
       .outputMode("append")
       .format("console")
@@ -163,10 +163,11 @@ object MakePrediction {
       .format("kafka")
       .option("kafka.bootstrap.servers", "localhost:9092")
       .option("topic", "flight-delay-ml-response")
-      .option("checkpointLocation", "/tmp/kafka_checkpoint")
+      .option("checkpointLocation", "/tmp/spark_checkpoint_kafka")
       .outputMode("append")
       .start()
 
+    println("Streaming jobs started: MongoDB, Console, and Kafka writer")
     consoleOutput.awaitTermination()
   }
 

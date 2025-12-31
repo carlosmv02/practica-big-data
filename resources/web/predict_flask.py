@@ -548,36 +548,62 @@ def on_join(data):
 
 def consume_prediction_results():
   """Background thread: consume prediction results from Kafka and emit to clients via SocketIO."""
+  import time
+  # Give Kafka a moment to be ready
+  time.sleep(2)
+  
+  print("[Kafka Consumer] Starting to listen for predictions on topic: {}".format(PREDICTION_RESPONSE_TOPIC))
+  
   try:
     consumer = KafkaConsumer(
       PREDICTION_RESPONSE_TOPIC,
       bootstrap_servers=['localhost:9092'],
       auto_offset_reset='latest',
       enable_auto_commit=True,
-      value_deserializer=lambda m: json.loads(m.decode('utf-8'))
+      group_id='flask-prediction-consumer',
+      value_deserializer=lambda m: json.loads(m.decode('utf-8')) if m else None,
+      api_version=(0, 10),
+      session_timeout_ms=30000,
+      request_timeout_ms=60000
     )
+    print("[Kafka Consumer] Successfully connected to Kafka broker")
   except Exception as e:
-    print("Failed to start KafkaConsumer for prediction results:", e)
+    print("[Kafka Consumer] Failed to start KafkaConsumer for prediction results: {}".format(e))
     return
 
-  for message in consumer:
-    try:
-      message_object = message.value
-      # Emit the whole message to the room matching UUID
-      uuid = message_object.get('UUID') if isinstance(message_object, dict) else None
-      if uuid:
-        socketio.emit('prediction', message_object, room=uuid)
-      else:
-        # Broadcast if no UUID
-        socketio.emit('prediction', message_object)
-    except Exception as e:
-      print('Error handling prediction message:', e)
+  try:
+    for message in consumer:
+      try:
+        if message.value is None:
+          print("[Kafka Consumer] Received null message, skipping")
+          continue
+          
+        message_object = message.value
+        print("[Kafka Consumer] Received message: {}".format(message_object))
+        
+        # Emit the whole message to the room matching UUID
+        uuid = message_object.get('UUID') if isinstance(message_object, dict) else None
+        if uuid:
+          print("[Kafka Consumer] Emitting to room: {}".format(uuid))
+          socketio.emit('prediction', message_object, room=uuid)
+        else:
+          # Broadcast if no UUID
+          print("[Kafka Consumer] No UUID found, broadcasting to all")
+          socketio.emit('prediction', message_object)
+      except Exception as e:
+        print('[Kafka Consumer] Error handling prediction message: {}'.format(e))
+  except KeyboardInterrupt:
+    print("[Kafka Consumer] Shutting down consumer")
+  except Exception as e:
+    print('[Kafka Consumer] Fatal error in consumer loop: {}'.format(e))
 
 
 # Start the Kafka consumer thread when module loaded
+print("[Flask] Starting Kafka consumer thread...")
 consumer_thread = threading.Thread(target=consume_prediction_results)
 consumer_thread.daemon = True
 consumer_thread.start()
+print("[Flask] Kafka consumer thread started")
 
 def shutdown_server():
   func = request.environ.get('werkzeug.server.shutdown')
