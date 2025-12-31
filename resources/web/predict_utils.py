@@ -38,7 +38,17 @@ def get_flight_distance(client, origin, dest):
     "Dest": dest,
   }
   record = client.agile_data_science.origin_dest_distances.find_one(query)
-  return record["Distance"]
+  if not record:
+    # No distance record found for this origin/dest pair — return 0 as fallback
+    # and log a warning to help debugging.
+    try:
+      print(f"[predict_utils] Warning: no origin_dest_distances record for {origin}->{dest}")
+    except Exception:
+      pass
+    return 0
+
+  # Safely return the Distance field if present
+  return record.get("Distance", 0)
 
 def get_regression_date_args(iso_date):
   """Given an ISO Date, return the day of year, day of month, day of week as the API expects them."""

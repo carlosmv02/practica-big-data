@@ -22,6 +22,8 @@ import json
 # Add SocketIO support
 from flask_socketio import SocketIO, join_room
 import threading
+import time
+from collections import defaultdict
 
 # Kafka consumer for results will run in background
 from kafka import KafkaConsumer
@@ -40,6 +42,12 @@ PREDICTION_RESPONSE_TOPIC = 'flight-delay-ml-response'
 socketio = SocketIO(app, cors_allowed_origins='*')
 
 import uuid
+
+# In-memory cache for predictions received from Kafka
+# Key: UUID -> value: message_object
+predictions_cache = {}
+# Events to allow HTTP endpoints to wait for a prediction to arrive
+prediction_events = defaultdict(threading.Event)
 
 # Chapter 5 controller: Fetch a flight and display it
 @app.route("/on_time_performance")
@@ -523,18 +531,19 @@ def flight_delays_page_kafka():
 @app.route("/flights/delays/predict/classify_realtime/response/<unique_id>")
 def classify_flight_delays_realtime_response(unique_id):
   """Serves predictions to polling requestors"""
-  
-  prediction = client.agile_data_science.flight_delay_ml_response.find_one(
-    {
-      "UUID": unique_id
-    }
-  )
-  
+  # Non-blocking: check in-memory cache first (populated by Kafka consumer),
+  # then MongoDB; if not found, return WAIT immediately so client can rely on Socket.IO.
+  cached = predictions_cache.get(unique_id)
+  if cached:
+    return json_util.dumps({"status": "OK", "id": unique_id, "prediction": cached})
+
+  # Fallback: check MongoDB if Spark already persisted the prediction
+  prediction = client.agile_data_science.flight_delay_ml_response.find_one({"UUID": unique_id})
   response = {"status": "WAIT", "id": unique_id}
   if prediction:
     response["status"] = "OK"
     response["prediction"] = prediction
-  
+
   return json_util.dumps(response)
 
 
@@ -581,9 +590,20 @@ def consume_prediction_results():
         message_object = message.value
         print("[Kafka Consumer] Received message: {}".format(message_object))
         
-        # Emit the whole message to the room matching UUID
+        # Emit the whole message to the room matching UUID and cache it
         uuid = message_object.get('UUID') if isinstance(message_object, dict) else None
         if uuid:
+          # Cache so HTTP endpoints can read it without polling Mongo
+          try:
+            predictions_cache[uuid] = message_object
+          except Exception:
+            pass
+          # Signal any waiter for this UUID
+          try:
+            if uuid in prediction_events:
+              prediction_events[uuid].set()
+          except Exception:
+            pass
           print("[Kafka Consumer] Emitting to room: {}".format(uuid))
           socketio.emit('prediction', message_object, room=uuid)
         else:
