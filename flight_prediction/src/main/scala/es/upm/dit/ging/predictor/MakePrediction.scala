@@ -19,7 +19,7 @@ object MakePrediction {
     import spark.implicits._
 
     //Load the arrival delay bucketizer
-    val base_path= "/Users/admin/Downloads/practica_creativa"
+    val base_path= "/home/ibdn/practica_creativa"
     val arrivalBucketizerPath = "%s/models/arrival_bucketizer_2.0.bin".format(base_path)
     print(arrivalBucketizerPath.toString())
     val arrivalBucketizer = Bucketizer.load(arrivalBucketizerPath)
@@ -154,6 +154,19 @@ object MakePrediction {
       .outputMode("append")
       .format("console")
       .start()
+    
+    // Also publish predictions to a Kafka topic so downstream apps can consume them
+    import org.apache.spark.sql.functions._
+    val kafkaOutput = finalPredictions.select(to_json(struct(finalPredictions.columns.map(col): _*)).alias("value"))
+
+    val kafkaWriter = kafkaOutput.writeStream
+      .format("kafka")
+      .option("kafka.bootstrap.servers", "localhost:9092")
+      .option("topic", "flight-delay-ml-response")
+      .option("checkpointLocation", "/tmp/kafka_checkpoint")
+      .outputMode("append")
+      .start()
+
     consoleOutput.awaitTermination()
   }
 

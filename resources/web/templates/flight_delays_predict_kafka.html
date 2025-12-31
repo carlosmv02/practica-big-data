@@ -29,6 +29,7 @@
       <p>Delay: <span id="result" style="display: inline-block;"></span></p>
   </div>
 
-  <!-- Load our form processing javascript -->
-  <script src="/static/flight_delay_predict_polling.js"></script>
+  <!-- Load Socket.IO client and our form processing javascript -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/static/flight_delay_predict_socket.js"></script>
 {% endblock %}
