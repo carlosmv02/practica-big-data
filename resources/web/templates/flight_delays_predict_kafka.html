@@ -29,7 +29,7 @@
       <p>Delay: <span id="result" style="display: inline-block;"></span></p>
   </div>
 
-  <!-- Load Socket.IO client and our form processing javascript -->
-  <script src="/socket.io/socket.io.js"></script>
+  <!-- Load Socket.IO client from CDN and our form processing javascript -->
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js" crossorigin="anonymous"></script>
   <script src="/static/flight_delay_predict_socket.js"></script>
 {% endblock %}

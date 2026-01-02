@@ -553,6 +553,13 @@ def on_join(data):
   uuid = data.get('uuid')
   if uuid:
     join_room(uuid)
+    # If the prediction already arrived before the client joined, emit it now
+    cached = predictions_cache.get(uuid)
+    if cached:
+      try:
+        socketio.emit('prediction', cached, room=uuid)
+      except Exception as e:
+        print(f"[SocketIO] Error emitting cached prediction for {uuid}: {e}")
 
 
 def consume_prediction_results():

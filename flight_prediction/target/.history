@@ -10,3 +10,13 @@ exit
 compile
 package
 exit
+compile
+clean
+compile
+clean
+compile
+package
+exit
+compile
+package
+exit

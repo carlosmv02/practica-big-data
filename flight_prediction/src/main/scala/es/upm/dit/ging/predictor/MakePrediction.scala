@@ -2,7 +2,7 @@ package es.upm.dit.ging.predictor
 import com.mongodb.spark._
 import org.apache.spark.ml.classification.RandomForestClassificationModel
 import org.apache.spark.ml.feature.{Bucketizer, StringIndexerModel, VectorAssembler}
-import org.apache.spark.sql.functions.{concat, from_json, lit}
+import org.apache.spark.sql.functions.{concat, from_json, lit, col, to_json, struct}
 import org.apache.spark.sql.types.{DataTypes, StructType}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
@@ -51,7 +51,7 @@ object MakePrediction {
 
     val flightJsonDf = df.selectExpr("CAST(value AS STRING)")
 
-    val struct = new StructType()
+    val flightSchema = new StructType()
       .add("Origin", DataTypes.StringType)
       .add("FlightNum", DataTypes.StringType)
       .add("DayOfWeek", DataTypes.IntegerType)
@@ -70,7 +70,7 @@ object MakePrediction {
       .add("Dest_index", DataTypes.DoubleType)
       .add("Route_index", DataTypes.DoubleType)
 
-    val flightNestedDf = flightJsonDf.select(from_json($"value", struct).as("flight"))
+    val flightNestedDf = flightJsonDf.select(from_json($"value", flightSchema).as("flight"))
     flightNestedDf.printSchema()
 
     // DataFrame for Vectorizing string fields with the corresponding pipeline for that column
@@ -156,8 +156,8 @@ object MakePrediction {
       .start()
     
     // Also publish predictions to a Kafka topic so downstream apps can consume them
-    import org.apache.spark.sql.functions._
-    val kafkaOutput = finalPredictions.select(to_json(struct(finalPredictions.columns.map(col): _*)).alias("value"))
+    // Simple serialization: to_json(struct(*)) to pack the entire row into Kafka value
+    val kafkaOutput = finalPredictions.selectExpr("to_json(struct(*)) AS value")
 
     val kafkaWriter = kafkaOutput.writeStream
       .format("kafka")

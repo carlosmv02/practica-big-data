@@ -1,0 +1,8 @@
+[0m[[0m[31merror[0m] [0m[0m/home/ibdn/practica_creativa/flight_prediction/src/main/scala/es/upm/dit/ging/predictor/MakePrediction.scala:161:23: overloaded method value apply with alternatives:[0m
+[0m[[0m[31merror[0m] [0m[0m  (fieldIndex: Int)org.apache.spark.sql.types.StructField <and>[0m
+[0m[[0m[31merror[0m] [0m[0m  (names: Set[String])org.apache.spark.sql.types.StructType <and>[0m
+[0m[[0m[31merror[0m] [0m[0m  (name: String)org.apache.spark.sql.types.StructField[0m
+[0m[[0m[31merror[0m] [0m[0m cannot be applied to (org.apache.spark.sql.Column)[0m
+[0m[[0m[31merror[0m] [0m[0m      .select(to_json(struct(finalPredictions.columns.map(c => col(c)): _*)).alias("value"))[0m
+[0m[[0m[31merror[0m] [0m[0m                      ^[0m
+[0m[[0m[31merror[0m] [0m[0mone error found[0m
