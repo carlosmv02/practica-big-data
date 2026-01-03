@@ -1,8 +1,6 @@
-version: "3.9"
-
 services:
   mongo:
-    image: mongo:7.0
+    image: mongo:4.4
     restart: unless-stopped
     ports:
       - "27017:27017"
@@ -10,22 +8,28 @@ services:
       - ./data/mongo:/data/db
 
   kafka:
-    image: bitnami/kafka:3.9
+    image: apache/kafka:3.9.0
     restart: unless-stopped
     ports:
       - "9092:9092"
+      - "9093:9093"
     environment:
-      - KAFKA_CFG_NODE_ID=0
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
-      - ALLOW_PLAINTEXT_LISTENER=yes
-      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_CLUSTER_ID: "CIfuZcJESj2h2R6yX0hP0Q"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
     volumes:
-      - ./data/kafka:/bitnami/kafka
+      - ./data/kafka:/var/lib/kafka/data
 
   flask:
     build:
@@ -36,29 +40,75 @@ services:
       - kafka
       - mongo
     environment:
-      - MONGO_URI=mongodb://mongo:27017
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - PREDICTION_TOPIC=flight-delay-ml-request
-      - PREDICTION_RESPONSE_TOPIC=flight-delay-ml-response
-      - ELASTIC_URL=http://elasticsearch:9200/agile_data_science
+      MONGO_URI: mongodb://mongo:27017
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PREDICTION_TOPIC: flight-delay-ml-request
+      PREDICTION_RESPONSE_TOPIC: flight-delay-ml-response
+      ELASTIC_URL: http://elasticsearch:9200/agile_data_science
+      PROJECT_HOME: /app
     ports:
       - "5001:5001"
     command: ["python", "predict_flask.py"]
 
-  spark:
+  spark-master:
+    image: apache/spark:3.5.3
+    hostname: spark-master
+    environment:
+      SPARK_MASTER_HOST: spark-master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", "--host", "spark-master"]
+
+  spark-worker-1:
+    image: apache/spark:3.5.3
+    hostname: spark-worker-1
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_MODE: worker
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+    ports:
+      - "8081:8081"
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+
+  spark-worker-2:
+    image: apache/spark:3.5.3
+    hostname: spark-worker-2
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_MODE: worker
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+    ports:
+      - "8082:8081"
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+
+  spark-submit:
     build:
       context: .
       dockerfile: docker/spark/Dockerfile
-    restart: unless-stopped
     depends_on:
+      - spark-master
+      - spark-worker-1
+      - spark-worker-2
       - kafka
       - mongo
     environment:
-      - MODEL_BASE_PATH=/opt/models
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - MONGO_URI=mongodb://mongo:27017
-      - PREDICTION_REQUEST_TOPIC=flight-delay-ml-request
-      - PREDICTION_RESPONSE_TOPIC=flight-delay-ml-response
-      - CHECKPOINT_DIR=/tmp
+      MODEL_BASE_PATH: /opt
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MONGO_URI: mongodb://mongo:27017
+      PREDICTION_REQUEST_TOPIC: flight-delay-ml-request
+      PREDICTION_RESPONSE_TOPIC: flight-delay-ml-response
+      CHECKPOINT_DIR: /tmp
+      MASTER_URL: spark://spark-master:7077
+
     volumes:
       - ./models:/opt/models:ro
+      # Este volumen se usa para persistir el caché de dependencias Ivy que Spark descarga
+      # cuando se usa `spark-submit --packages` (Kafka, Mongo connector, etc.).
+      # Evita que Spark vuelva a descargar los JARs en cada arranque y previene errores
+      # relacionados con rutas HOME inválidas en contenedores Docker.
+      - ./data/ivy:/tmp/.ivy2

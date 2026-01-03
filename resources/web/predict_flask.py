@@ -552,9 +552,11 @@ def classify_flight_delays_realtime_response(unique_id):
 # SocketIO: clients join a room using their UUID so they receive only their prediction
 @socketio.on('join')
 def on_join(data):
+  print("[SocketIO] join received:", data)
   uuid = data.get('uuid')
   if uuid:
     join_room(uuid)
+    print("[SocketIO] joined room:", uuid)
     # If the prediction already arrived before the client joined, emit it now
     cached = predictions_cache.get(uuid)
     if cached:
@@ -645,6 +647,7 @@ def shutdown():
   shutdown_server()
   return 'Server shutting down...'
 
+
 if __name__ == "__main__":
     socketio.run(
       app,
@@ -652,3 +655,14 @@ if __name__ == "__main__":
       host='0.0.0.0',
       port=5001
     )
+
+"""
+if __name__ == "__main__":
+    socketio.run(
+      app,
+      debug=False,
+      use_reloader=False,
+      host="0.0.0.0",
+      port=5001
+    )
+"""
