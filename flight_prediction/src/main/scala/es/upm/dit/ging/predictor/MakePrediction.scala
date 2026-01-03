@@ -19,7 +19,7 @@ object MakePrediction {
     import spark.implicits._
 
     //Load the arrival delay bucketizer
-    val base_path= "/home/ibdn/practica_creativa"
+    val base_path= "/opt/spark-apps"
     val arrivalBucketizerPath = "%s/models/arrival_bucketizer_2.0.bin".format(base_path)
     print(arrivalBucketizerPath.toString())
     val arrivalBucketizer = Bucketizer.load(arrivalBucketizerPath)
@@ -44,7 +44,7 @@ object MakePrediction {
     val df = spark
       .readStream
       .format("kafka")
-      .option("kafka.bootstrap.servers", "localhost:9092")
+      .option("kafka.bootstrap.servers", "kafka:9092")
       .option("subscribe", "flight-delay-ml-request")
       .load()
     df.printSchema()
@@ -140,7 +140,7 @@ object MakePrediction {
     val dataStreamWriter = finalPredictions
       .writeStream
       .format("mongodb")
-      .option("spark.mongodb.connection.uri", "mongodb://127.0.0.1:27017")
+      .option("spark.mongodb.connection.uri", "mongodb://mongodb:27017")
       .option("spark.mongodb.database", "agile_data_science")
       .option("checkpointLocation", "/tmp/spark_checkpoint_mongo")
       .option("spark.mongodb.collection", "flight_delay_ml_response")
@@ -161,7 +161,7 @@ object MakePrediction {
 
     val kafkaWriter = kafkaOutput.writeStream
       .format("kafka")
-      .option("kafka.bootstrap.servers", "localhost:9092")
+      .option("kafka.bootstrap.servers", "kafka:9092")
       .option("topic", "flight-delay-ml-response")
       .option("checkpointLocation", "/tmp/spark_checkpoint_kafka")
       .outputMode("append")

@@ -34,7 +34,7 @@ import datetime
 
 # Setup Kafka
 from kafka import KafkaProducer
-producer = KafkaProducer(bootstrap_servers=['localhost:9092'],api_version=(0,10))
+producer = KafkaProducer(bootstrap_servers=['kafka:9092'],api_version=(0,10))
 PREDICTION_TOPIC = 'flight-delay-ml-request'
 PREDICTION_RESPONSE_TOPIC = 'flight-delay-ml-response'
 
@@ -573,7 +573,7 @@ def consume_prediction_results():
   try:
     consumer = KafkaConsumer(
       PREDICTION_RESPONSE_TOPIC,
-      bootstrap_servers=['localhost:9092'],
+      bootstrap_servers=['kafka:9092'],
       auto_offset_reset='latest',
       enable_auto_commit=True,
       group_id='flask-prediction-consumer',

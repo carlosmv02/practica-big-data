@@ -1,0 +1,17 @@
+FROM bitnami/spark:3.5.3
+
+USER root
+
+# Copy the compiled JAR and models
+COPY flight_prediction/target/scala-2.12/flight_prediction_2.12-0.1.jar /opt/spark-apps/
+COPY models/ /opt/spark-apps/models/
+
+# Create entrypoint script
+COPY docker-entrypoint-spark.sh /opt/spark-apps/
+RUN chmod +x /opt/spark-apps/docker-entrypoint-spark.sh
+
+WORKDIR /opt/spark-apps
+
+USER 1001
+
+CMD ["/opt/spark-apps/docker-entrypoint-spark.sh"]
