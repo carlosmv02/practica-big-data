@@ -18,34 +18,41 @@ object MakePrediction {
       .getOrCreate()
     import spark.implicits._
 
+    // Make locations and connection strings configurable for containers
+    val modelBasePath = sys.env.getOrElse("MODEL_BASE_PATH", "/opt/models")
+    val kafkaBootstrap = sys.env.getOrElse("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+    val mongoUri = sys.env.getOrElse("MONGO_URI", "mongodb://mongo:27017")
+    val predictionRequestTopic = sys.env.getOrElse("PREDICTION_REQUEST_TOPIC", "flight-delay-ml-request")
+    val predictionResponseTopic = sys.env.getOrElse("PREDICTION_RESPONSE_TOPIC", "flight-delay-ml-response")
+    val checkpointBase = sys.env.getOrElse("CHECKPOINT_DIR", "/tmp")
+
     //Load the arrival delay bucketizer
-    val base_path= "/home/ibdn/practica_creativa"
-    val arrivalBucketizerPath = "%s/models/arrival_bucketizer_2.0.bin".format(base_path)
+    val arrivalBucketizerPath = "%s/models/arrival_bucketizer_2.0.bin".format(modelBasePath)
     print(arrivalBucketizerPath.toString())
     val arrivalBucketizer = Bucketizer.load(arrivalBucketizerPath)
     val columns= Seq("Carrier","Origin","Dest","Route")
 
     //Load all the string field vectorizer pipelines into a dict
     val stringIndexerModelPath =  columns.map(n=> ("%s/models/string_indexer_model_"
-      .format(base_path)+"%s.bin".format(n)).toSeq)
+      .format(modelBasePath)+"%s.bin".format(n)).toSeq)
     val stringIndexerModel = stringIndexerModelPath.map{n => StringIndexerModel.load(n.toString)}
     val stringIndexerModels  = (columns zip stringIndexerModel).toMap
 
     // Load the numeric vector assembler
-    val vectorAssemblerPath = "%s/models/numeric_vector_assembler.bin".format(base_path)
+    val vectorAssemblerPath = "%s/models/numeric_vector_assembler.bin".format(modelBasePath)
     val vectorAssembler = VectorAssembler.load(vectorAssemblerPath)
 
     // Load the classifier model
     val randomForestModelPath = "%s/models/spark_random_forest_classifier.flight_delays.5.0.bin".format(
-      base_path)
+      modelBasePath)
     val rfc = RandomForestClassificationModel.load(randomForestModelPath)
 
     //Process Prediction Requests in Streaming
     val df = spark
       .readStream
       .format("kafka")
-      .option("kafka.bootstrap.servers", "localhost:9092")
-      .option("subscribe", "flight-delay-ml-request")
+      .option("kafka.bootstrap.servers", kafkaBootstrap)
+      .option("subscribe", predictionRequestTopic)
       .load()
     df.printSchema()
 
@@ -140,9 +147,9 @@ object MakePrediction {
     val dataStreamWriter = finalPredictions
       .writeStream
       .format("mongodb")
-      .option("spark.mongodb.connection.uri", "mongodb://127.0.0.1:27017")
+      .option("spark.mongodb.connection.uri", mongoUri)
       .option("spark.mongodb.database", "agile_data_science")
-      .option("checkpointLocation", "/tmp/spark_checkpoint_mongo")
+      .option("checkpointLocation", s"$checkpointBase/spark_checkpoint_mongo")
       .option("spark.mongodb.collection", "flight_delay_ml_response")
       .outputMode("append")
 
@@ -161,9 +168,9 @@ object MakePrediction {
 
     val kafkaWriter = kafkaOutput.writeStream
       .format("kafka")
-      .option("kafka.bootstrap.servers", "localhost:9092")
-      .option("topic", "flight-delay-ml-response")
-      .option("checkpointLocation", "/tmp/spark_checkpoint_kafka")
+      .option("kafka.bootstrap.servers", kafkaBootstrap)
+      .option("topic", predictionResponseTopic)
+      .option("checkpointLocation", s"$checkpointBase/spark_checkpoint_kafka")
       .outputMode("append")
       .start()
 

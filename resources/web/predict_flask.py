@@ -12,7 +12,8 @@ import predict_utils
 # Set up Flask, Mongo and Elasticsearch
 app = Flask(__name__)
 
-client = MongoClient()
+MONGO_URI = config.MONGO_URI
+client = MongoClient(MONGO_URI)
 
 from pyelasticsearch import ElasticSearch
 elastic = ElasticSearch(config.ELASTIC_URL)
@@ -34,9 +35,10 @@ import datetime
 
 # Setup Kafka
 from kafka import KafkaProducer
-producer = KafkaProducer(bootstrap_servers=['localhost:9092'],api_version=(0,10))
-PREDICTION_TOPIC = 'flight-delay-ml-request'
-PREDICTION_RESPONSE_TOPIC = 'flight-delay-ml-response'
+KAFKA_BOOTSTRAP_SERVERS = config.KAFKA_BOOTSTRAP_SERVERS.split(",")
+producer = KafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,api_version=(0,10))
+PREDICTION_TOPIC = config.PREDICTION_TOPIC
+PREDICTION_RESPONSE_TOPIC = config.PREDICTION_RESPONSE_TOPIC
 
 # Initialize SocketIO
 socketio = SocketIO(app, cors_allowed_origins='*')
@@ -573,7 +575,7 @@ def consume_prediction_results():
   try:
     consumer = KafkaConsumer(
       PREDICTION_RESPONSE_TOPIC,
-      bootstrap_servers=['localhost:9092'],
+      bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
       auto_offset_reset='latest',
       enable_auto_commit=True,
       group_id='flask-prediction-consumer',
