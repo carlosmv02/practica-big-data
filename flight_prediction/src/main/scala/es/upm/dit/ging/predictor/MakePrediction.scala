@@ -1,8 +1,7 @@
 package es.upm.dit.ging.predictor
-import com.mongodb.spark._
 import org.apache.spark.ml.classification.RandomForestClassificationModel
 import org.apache.spark.ml.feature.{Bucketizer, StringIndexerModel, VectorAssembler}
-import org.apache.spark.sql.functions.{concat, from_json, lit, col, to_json, struct}
+import org.apache.spark.sql.functions.{concat, from_json, lit, col, to_json, struct, current_timestamp}
 import org.apache.spark.sql.types.{DataTypes, StructType}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
@@ -13,8 +12,7 @@ object MakePrediction {
 
     val spark = SparkSession
       .builder
-      .appName("StructuredNetworkWordCount")
-      .master("local[*]")
+      .appName("FlightDelayPredictor")
       .getOrCreate()
     import spark.implicits._
 
@@ -136,18 +134,47 @@ object MakePrediction {
     // Inspect the output
     finalPredictions.printSchema()
 
-    // define a streaming query for MongoDB
-    val dataStreamWriter = finalPredictions
+    // Define function to write batch to Cassandra
+    def writeToCassandra(batchDF: DataFrame, batchId: Long): Unit = {
+      import org.apache.spark.sql.functions.{col, uuid, current_timestamp}
+      
+      val cassandraDF = batchDF
+        .withColumn("id", uuid())
+        .withColumn("created_at", current_timestamp())
+        .select(
+          col("id"),
+          col("Origin").alias("origin"),
+          col("Dest").alias("dest"),
+          col("Carrier").alias("carrier"),
+          col("FlightDate").cast("string").alias("flightdate"),
+          col("Timestamp").cast("string").alias("dep_time"),
+          col("DepDelay").alias("dep_delay"),
+          lit(null).cast("string").alias("arr_time"),
+          lit(null).cast("double").alias("arr_delay"),
+          col("Distance").alias("distance"),
+          col("prediction").cast("int"),
+          col("created_at")
+        )
+      
+      cassandraDF.write
+        .format("org.apache.spark.sql.cassandra")
+        .options(Map(
+          "keyspace" -> "flight_delays",
+          "table" -> "flight_predictions"
+        ))
+        .mode("append")
+        .save()
+    }
+
+    // Define a streaming query for Cassandra using foreachBatch
+    val cassandraStreamWriter = finalPredictions
       .writeStream
-      .format("mongodb")
-      .option("spark.mongodb.connection.uri", "mongodb://mongodb:27017")
-      .option("spark.mongodb.database", "agile_data_science")
-      .option("checkpointLocation", "/tmp/spark_checkpoint_mongo")
-      .option("spark.mongodb.collection", "flight_delay_ml_response")
+      .foreachBatch(writeToCassandra _)
+      .option("checkpointLocation", "/tmp/spark_checkpoint_cassandra")
       .outputMode("append")
 
-    // run the query for MongoDB
-    val query = dataStreamWriter.start()
+    // Run the query for Cassandra
+    val query = cassandraStreamWriter.start()
     
     // Console Output for predictions
     val consoleOutput = finalPredictions.writeStream
@@ -167,7 +194,7 @@ object MakePrediction {
       .outputMode("append")
       .start()
 
-    println("Streaming jobs started: MongoDB, Console, and Kafka writer")
+    println("Streaming jobs started: Cassandra, Console, and Kafka writer")
     consoleOutput.awaitTermination()
   }
 

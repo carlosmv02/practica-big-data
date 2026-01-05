@@ -32,24 +32,24 @@ El sistema está compuesto por 6 contenedores:
 Para levantar todo el escenario:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 Para verificar el estado de los servicios:
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
 Para ver los logs:
 
 ```bash
 # Todos los servicios
-docker-compose logs -f
+docker compose logs -f
 
 # Un servicio específico
-docker-compose logs -f flask-app
-docker-compose logs -f spark-worker-1
+docker compose logs -f flask-app
+docker compose logs -f spark-worker-1
 ```
 
 ## Acceso a los servicios
@@ -73,18 +73,18 @@ docker-compose logs -f spark-worker-1
 
 ### Detener los servicios
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### Detener y eliminar volúmenes (limpieza completa)
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
 ### Reconstruir las imágenes después de cambios
 ```bash
-docker-compose build --no-cache
-docker-compose up -d
+docker compose build --no-cache
+docker compose up -d
 ```
 
 ### Acceder a un contenedor
@@ -101,25 +101,25 @@ docker-compose logs -f spark-worker-1 spark-worker-2
 ## Troubleshooting
 
 ### Los workers no se conectan a Spark Master
-- Verificar que el master esté corriendo: `docker-compose ps spark-master`
-- Revisar logs: `docker-compose logs spark-master`
+- Verificar que el master esté corriendo: `docker compose ps spark-master`
+- Revisar logs: `docker compose logs spark-master`
 
 ### Kafka no está disponible
 - Esperar unos segundos, Kafka tarda en inicializarse
-- Verificar: `docker-compose logs kafka`
+- Verificar: `docker compose logs kafka`
 
 ### No se reciben predicciones en el navegador
 1. Verificar que los workers están ejecutando el job:
    ```bash
-   docker-compose logs spark-worker-1 | grep "Flight predictor"
+   docker compose logs spark-worker-1 | grep "Flight predictor"
    ```
 2. Verificar que Flask está consumiendo Kafka:
    ```bash
-   docker-compose logs flask-app | grep "Kafka Consumer"
+   docker compose logs flask-app | grep "Kafka Consumer"
    ```
 3. Verificar que Spark está publicando en Kafka:
    ```bash
-   docker-compose logs spark-worker-1 | grep "Kafka writer"
+   docker compose logs spark-worker-1 | grep "Kafka writer"
    ```
 
 ### Reconstruir después de cambios en el código
@@ -128,14 +128,14 @@ Si modificas el código Scala:
 ```bash
 cd flight_prediction
 sbt package
-docker-compose build spark-worker-1 spark-worker-2
-docker-compose up -d spark-worker-1 spark-worker-2
+docker compose build spark-worker-1 spark-worker-2
+docker compose up -d spark-worker-1 spark-worker-2
 ```
 
 Si modificas el código Python:
 ```bash
-docker-compose build flask-app
-docker-compose up -d flask-app
+docker compose build flask-app
+docker compose up -d flask-app
 ```
 
 ## Notas importantes

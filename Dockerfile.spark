@@ -1,17 +1,29 @@
-FROM bitnami/spark:3.5.3
+FROM apache/spark:3.5.0
 
 USER root
+
+# Install netcat for healthchecks and cqlsh for Cassandra initialization
+RUN apt-get update && \
+    apt-get install -y netcat python3-pip && \
+    pip3 install cqlsh && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy the compiled JAR and models
 COPY flight_prediction/target/scala-2.12/flight_prediction_2.12-0.1.jar /opt/spark-apps/
 COPY models/ /opt/spark-apps/models/
 
+# Copy Cassandra init script
+COPY init-cassandra.cql /opt/spark-apps/
+
 # Create entrypoint script
 COPY docker-entrypoint-spark.sh /opt/spark-apps/
 RUN chmod +x /opt/spark-apps/docker-entrypoint-spark.sh
 
+# Create .ivy2 directory with proper permissions for spark user
+RUN mkdir -p /home/spark/.ivy2 && chown -R spark:spark /home/spark/.ivy2
+
 WORKDIR /opt/spark-apps
 
-USER 1001
+USER spark
 
 CMD ["/opt/spark-apps/docker-entrypoint-spark.sh"]

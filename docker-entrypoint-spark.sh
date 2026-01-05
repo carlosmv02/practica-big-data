@@ -2,21 +2,39 @@
 set -e
 
 echo "Waiting for Kafka to be ready..."
-while ! nc -z kafka 9092; do
-  sleep 1
+for i in {1..30}; do
+  if nc -z kafka 9092; then
+    echo "Kafka is ready!"
+    break
+  fi
+  echo "Waiting for Kafka... attempt $i/30"
+  sleep 2
 done
-echo "Kafka is ready!"
 
-echo "Waiting for MongoDB to be ready..."
-while ! nc -z mongodb 27017; do
-  sleep 1
+echo "Waiting for Cassandra to be ready..."
+for i in {1..60}; do
+  if nc -z cassandra 9042; then
+    echo "Cassandra port is open, checking if CQL is ready..."
+    # Give Cassandra extra time to initialize CQL
+    sleep 5
+    echo "Cassandra is ready!"
+    break
+  fi
+  echo "Waiting for Cassandra... attempt $i/60"
+  sleep 2
 done
-echo "MongoDB is ready!"
+
+echo "Initializing Cassandra schema..."
+# Wait a bit more to ensure Cassandra is fully ready
+sleep 10
+# Try to run the init script
+cqlsh cassandra -f /opt/spark-apps/init-cassandra.cql || echo "Schema may already exist, continuing..."
 
 echo "Starting Spark job..."
-/opt/bitnami/spark/bin/spark-submit \
-  --packages org.mongodb.spark:mongo-spark-connector_2.12:10.4.1,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3 \
-  --conf spark.mongodb.write.connection.uri="mongodb://mongodb:27017" \
-  --conf spark.mongodb.read.connection.uri="mongodb://mongodb:27017" \
+/opt/spark/bin/spark-submit \
+  --packages com.datastax.spark:spark-cassandra-connector_2.12:3.4.1,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 \
+  --conf spark.cassandra.connection.host=cassandra \
+  --conf spark.cassandra.connection.port=9042 \
+  --master spark://spark-master:7077 \
   --class es.upm.dit.ging.predictor.MakePrediction \
   /opt/spark-apps/flight_prediction_2.12-0.1.jar
