@@ -1,5 +1,4 @@
 import sys, os, re
-import pymongo
 import datetime, iso8601
 
 def process_search(results):
@@ -15,7 +14,7 @@ def process_search(results):
   return records, total
 
 def get_navigation_offsets(offset1, offset2, increment):
-  """Calculate offsets for fetching lists of flights from MongoDB"""
+  """Calculate offsets for fetching lists of flights from Cassandra"""
   offsets = {}
   offsets['Next'] = {'top_offset': offset2 + increment, 'bottom_offset':
   offset1 + increment}
@@ -31,14 +30,23 @@ def strip_place(url):
     return url
   return p
 
-def get_flight_distance(client, origin, dest):
+def get_flight_distance(session, origin, dest):
   """Get the distance between a pair of airport codes"""
-  query = {
-    "Origin": origin,
-    "Dest": dest,
-  }
-  record = client.agile_data_science.origin_dest_distances.find_one(query)
-  if not record:
+  if session is None:
+    return 0
+  try:
+    row = session.execute(
+      "SELECT distance FROM origin_dest_distances WHERE origin=? AND dest=? LIMIT 1 ALLOW FILTERING",
+      (origin, dest)
+    ).one()
+  except Exception as exc:
+    try:
+      print(f"[predict_utils] Cassandra lookup failed for {origin}->{dest}: {exc}")
+    except Exception:
+      pass
+    row = None
+
+  if not row:
     # No distance record found for this origin/dest pair — return 0 as fallback
     # and log a warning to help debugging.
     try:
@@ -48,7 +56,7 @@ def get_flight_distance(client, origin, dest):
     return 0
 
   # Safely return the Distance field if present
-  return record.get("Distance", 0)
+  return row.get("distance", 0)
 
 def get_regression_date_args(iso_date):
   """Given an ISO Date, return the day of year, day of month, day of week as the API expects them."""

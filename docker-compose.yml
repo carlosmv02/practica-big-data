@@ -1,11 +1,19 @@
 services:
-  mongo:
-    image: mongo:4.4
+  cassandra:
+    image: cassandra:4.1
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "9042:9042"
+    environment:
+      MAX_HEAP_SIZE: 1G
+      HEAP_NEWSIZE: 200M
     volumes:
-      - ./data/mongo:/data/db
+      - ./data/cassandra:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'SHOW VERSION' localhost 9042"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
 
   kafka:
     image: apache/kafka:3.9.0
@@ -37,10 +45,15 @@ services:
       dockerfile: docker/flask/Dockerfile
     restart: unless-stopped
     depends_on:
-      - kafka
-      - mongo
+      kafka:
+        condition: service_started
+      cassandra:
+        condition: service_healthy
     environment:
-      MONGO_URI: mongodb://mongo:27017
+      CASSANDRA_HOST: cassandra
+      CASSANDRA_PORT: 9042
+      CASSANDRA_KEYSPACE: agile_data_science
+      CASSANDRA_TABLE: flight_delay_ml_response
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       PREDICTION_TOPIC: flight-delay-ml-request
       PREDICTION_RESPONSE_TOPIC: flight-delay-ml-response
@@ -95,11 +108,14 @@ services:
       - spark-worker-1
       - spark-worker-2
       - kafka
-      - mongo
+      - cassandra
     environment:
       MODEL_BASE_PATH: /opt
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      MONGO_URI: mongodb://mongo:27017
+      CASSANDRA_HOST: cassandra
+      CASSANDRA_PORT: 9042
+      CASSANDRA_KEYSPACE: agile_data_science
+      CASSANDRA_TABLE: flight_delay_ml_response
       PREDICTION_REQUEST_TOPIC: flight-delay-ml-request
       PREDICTION_RESPONSE_TOPIC: flight-delay-ml-response
       CHECKPOINT_DIR: /tmp

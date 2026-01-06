@@ -1,6 +1,7 @@
-import sys, os, re
+import sys, os, re, time
 from flask import Flask, render_template, request
-from pymongo import MongoClient
+from cassandra.cluster import Cluster
+from cassandra.query import dict_factory
 from bson import json_util
 
 # Configuration details
@@ -9,11 +10,80 @@ import config
 # Helpers for search and prediction APIs
 import predict_utils
 
-# Set up Flask, Mongo and Elasticsearch
+# Set up Flask, Cassandra and Elasticsearch
 app = Flask(__name__)
 
-MONGO_URI = config.MONGO_URI
-client = MongoClient(MONGO_URI)
+CASSANDRA_HOST = config.CASSANDRA_HOST
+CASSANDRA_PORT = config.CASSANDRA_PORT
+CASSANDRA_KEYSPACE = config.CASSANDRA_KEYSPACE
+CASSANDRA_TABLE = config.CASSANDRA_TABLE
+
+def create_cassandra_session(max_retries=30, delay=2):
+  """Create a Cassandra session with simple retry/backoff so the app waits for the DB."""
+  attempt = 0
+  while attempt < max_retries:
+    try:
+      cluster = Cluster([CASSANDRA_HOST], port=CASSANDRA_PORT)
+      session = cluster.connect()
+      # Ensure keyspace exists before switching to it
+      session.execute(
+        f"""
+        CREATE KEYSPACE IF NOT EXISTS {CASSANDRA_KEYSPACE}
+        WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}
+        """
+      )
+      session.set_keyspace(CASSANDRA_KEYSPACE)
+      session.row_factory = dict_factory
+      print(f"[Flask] Connected to Cassandra at {CASSANDRA_HOST}:{CASSANDRA_PORT}, keyspace {CASSANDRA_KEYSPACE}")
+      return session
+    except Exception as exc:
+      attempt += 1
+      print(f"[Flask] Cassandra not ready (attempt {attempt}/{max_retries}): {exc}")
+      time.sleep(delay)
+  print("[Flask] Warning: Cassandra session not available after retries. App will serve with empty data.")
+  return None
+
+# Initialize session (with retries) and recreate lazily if dropped
+cassandra_cluster = None
+cassandra_session = create_cassandra_session()
+
+def get_cassandra_session():
+  global cassandra_session, cassandra_cluster
+  if cassandra_session is not None:
+    return cassandra_session
+  cassandra_session = create_cassandra_session()
+  return cassandra_session
+
+def cassandra_fetch_one(query, params=()):
+  sess = get_cassandra_session()
+  if sess is None:
+    return None
+  try:
+    return sess.execute(query, params).one()
+  except Exception as exc:
+    print(f"[Cassandra] fetch_one error: {exc} | query={query} params={params}")
+    return None
+
+def cassandra_fetch_all(query, params=()):
+  sess = get_cassandra_session()
+  if sess is None:
+    return []
+  try:
+    return list(sess.execute(query, params))
+  except Exception as exc:
+    print(f"[Cassandra] fetch_all error: {exc} | query={query} params={params}")
+    return []
+
+def cassandra_insert(query, params=()):
+  sess = get_cassandra_session()
+  if sess is None:
+    return False
+  try:
+    sess.execute(query, params)
+    return True
+  except Exception as exc:
+    print(f"[Cassandra] insert error: {exc} | query={query} params={params}")
+    return False
 
 from pyelasticsearch import ElasticSearch
 elastic = ElasticSearch(config.ELASTIC_URL)
@@ -23,7 +93,6 @@ import json
 # Add SocketIO support
 from flask_socketio import SocketIO, join_room
 import threading
-import time
 from collections import defaultdict
 
 # Kafka consumer for results will run in background
@@ -59,11 +128,10 @@ def on_time_performance():
   flight_date = request.args.get('FlightDate')
   flight_num = request.args.get('FlightNum')
   
-  flight = client.agile_data_science.on_time_performance.find_one({
-    'Carrier': carrier,
-    'FlightDate': flight_date,
-    'FlightNum': flight_num
-  })
+  flight = cassandra_fetch_one(
+    "SELECT * FROM on_time_performance WHERE carrier=? AND flightdate=? AND flightnum=? LIMIT 1 ALLOW FILTERING",
+    (carrier, flight_date, flight_num)
+  )
   
   return render_template('flight.html', flight=flight)
 
@@ -71,18 +139,11 @@ def on_time_performance():
 @app.route("/flights/<origin>/<dest>/<flight_date>")
 def list_flights(origin, dest, flight_date):
   
-  flights = client.agile_data_science.on_time_performance.find(
-    {
-      'Origin': origin,
-      'Dest': dest,
-      'FlightDate': flight_date
-    },
-    sort = [
-      ('DepTime', 1),
-      ('ArrTime', 1),
-    ]
+  flights = cassandra_fetch_all(
+    "SELECT * FROM on_time_performance WHERE origin=? AND dest=? AND flightdate=? ALLOW FILTERING",
+    (origin, dest, flight_date)
   )
-  flight_count = flights.count()
+  flight_count = len(flights)
   
   return render_template(
     'flights.html',
@@ -94,31 +155,19 @@ def list_flights(origin, dest, flight_date):
 # Controller: Fetch a flight table
 @app.route("/total_flights")
 def total_flights():
-  total_flights = client.agile_data_science.flights_by_month.find({}, 
-    sort = [
-      ('Year', 1),
-      ('Month', 1)
-    ])
+  total_flights = cassandra_fetch_all("SELECT * FROM flights_by_month")
   return render_template('total_flights.html', total_flights=total_flights)
 
 # Serve the chart's data via an asynchronous request (formerly known as 'AJAX')
 @app.route("/total_flights.json")
 def total_flights_json():
-  total_flights = client.agile_data_science.flights_by_month.find({}, 
-    sort = [
-      ('Year', 1),
-      ('Month', 1)
-    ])
+  total_flights = cassandra_fetch_all("SELECT * FROM flights_by_month")
   return json_util.dumps(total_flights, ensure_ascii=False)
 
 # Controller: Fetch a flight chart
 @app.route("/total_flights_chart")
 def total_flights_chart():
-  total_flights = client.agile_data_science.flights_by_month.find({}, 
-    sort = [
-      ('Year', 1),
-      ('Month', 1)
-    ])
+  total_flights = cassandra_fetch_all("SELECT * FROM flights_by_month")
   return render_template('total_flights_chart.html', total_flights=total_flights)
 
 @app.route("/airplanes")
@@ -196,15 +245,16 @@ def search_airplanes():
 @app.route("/airplanes/chart/manufacturers.json")
 @app.route("/airplanes/chart/manufacturers.json")
 def airplane_manufacturers_chart():
-  mfr_chart = client.agile_data_science.airplane_manufacturer_totals.find_one()
+  mfr_chart = cassandra_fetch_one("SELECT * FROM airplane_manufacturer_totals LIMIT 1 ALLOW FILTERING")
   return json.dumps(mfr_chart)
 
 # Controller: Fetch a flight and display it
 @app.route("/airplane/<tail_number>")
 @app.route("/airplane/flights/<tail_number>")
 def flights_per_airplane(tail_number):
-  flights = client.agile_data_science.flights_per_airplane.find_one(
-    {'TailNum': tail_number}
+  flights = cassandra_fetch_one(
+    "SELECT * FROM flights_per_airplane WHERE tailnum=? LIMIT 1 ALLOW FILTERING",
+    (tail_number,)
   )
   return render_template(
     'flights_per_airplane.html',
@@ -215,11 +265,13 @@ def flights_per_airplane(tail_number):
 # Controller: Fetch an airplane entity page
 @app.route("/airline/<carrier_code>")
 def airline(carrier_code):
-  airline_summary = client.agile_data_science.airlines.find_one(
-    {'CarrierCode': carrier_code}
+  airline_summary = cassandra_fetch_one(
+    "SELECT * FROM airlines WHERE carriercode=? LIMIT 1 ALLOW FILTERING",
+    (carrier_code,)
   )
-  airline_airplanes = client.agile_data_science.airplanes_per_carrier.find_one(
-    {'Carrier': carrier_code}
+  airline_airplanes = cassandra_fetch_one(
+    "SELECT * FROM airplanes_per_carrier WHERE carrier=? LIMIT 1 ALLOW FILTERING",
+    (carrier_code,)
   )
   return render_template(
     'airlines.html',
@@ -233,7 +285,7 @@ def airline(carrier_code):
 @app.route("/airlines")
 @app.route("/airlines/")
 def airlines():
-  airlines = client.agile_data_science.airplanes_per_carrier.find()
+  airlines = cassandra_fetch_all("SELECT * FROM airplanes_per_carrier")
   return render_template('all_airlines.html', airlines=airlines)
 
 @app.route("/flights/search")
@@ -403,7 +455,7 @@ def classify_flight_delays():
   
   # Set the derived values
   prediction_features['Distance'] = predict_utils.get_flight_distance(
-    client, api_form_values['Origin'],
+    get_cassandra_session(), api_form_values['Origin'],
     api_form_values['Dest']
   )
   
@@ -417,9 +469,16 @@ def classify_flight_delays():
   # Add a timestamp
   prediction_features['Timestamp'] = predict_utils.get_current_timestamp()
   
-  client.agile_data_science.prediction_tasks.insert_one(
-    prediction_features
-  )
+  try:
+    columns = ", ".join(prediction_features.keys())
+    placeholders = ", ".join(["?"] * len(prediction_features))
+    values = tuple(prediction_features.values())
+    cassandra_insert(
+      f"INSERT INTO prediction_tasks ({columns}) VALUES ({placeholders})",
+      values
+    )
+  except Exception as exc:
+    print(f"[Cassandra] Failed to persist prediction_tasks: {exc}")
   return json_util.dumps(prediction_features)
 
 @app.route("/flights/delays/predict_batch")
@@ -448,14 +507,10 @@ def flight_delays_batch_results_page(iso_date):
   rounded_tomorrow_dt = rounded_today + datetime.timedelta(days=1)
   iso_tomorrow = rounded_tomorrow_dt.isoformat()
   
-  # Fetch today's prediction results from Mongo
-  predictions = client.agile_data_science.prediction_results.find(
-    {
-      'Timestamp': {
-        "$gte": iso_today,
-        "$lte": iso_tomorrow,
-      }
-    }
+  # Fetch today's prediction results from Cassandra
+  predictions = cassandra_fetch_all(
+    "SELECT * FROM prediction_results WHERE timestamp >= ? AND timestamp <= ? ALLOW FILTERING",
+    (iso_today, iso_tomorrow)
   )
   
   return render_template(
@@ -492,7 +547,7 @@ def classify_flight_delays_realtime():
   
   # Set the derived values
   prediction_features['Distance'] = predict_utils.get_flight_distance(
-    client, api_form_values['Origin'],
+    get_cassandra_session(), api_form_values['Origin'],
     api_form_values['Dest']
   )
   
@@ -534,13 +589,16 @@ def flight_delays_page_kafka():
 def classify_flight_delays_realtime_response(unique_id):
   """Serves predictions to polling requestors"""
   # Non-blocking: check in-memory cache first (populated by Kafka consumer),
-  # then MongoDB; if not found, return WAIT immediately so client can rely on Socket.IO.
+  # then Cassandra; if not found, return WAIT immediately so client can rely on Socket.IO.
   cached = predictions_cache.get(unique_id)
   if cached:
     return json_util.dumps({"status": "OK", "id": unique_id, "prediction": cached})
 
-  # Fallback: check MongoDB if Spark already persisted the prediction
-  prediction = client.agile_data_science.flight_delay_ml_response.find_one({"UUID": unique_id})
+  # Fallback: check Cassandra if Spark already persisted the prediction
+  prediction = cassandra_fetch_one(
+    f"SELECT * FROM {CASSANDRA_TABLE} WHERE uuid=? LIMIT 1 ALLOW FILTERING",
+    (unique_id,)
+  )
   response = {"status": "WAIT", "id": unique_id}
   if prediction:
     response["status"] = "OK"
@@ -604,7 +662,7 @@ def consume_prediction_results():
         # Emit the whole message to the room matching UUID and cache it
         uuid = message_object.get('UUID') if isinstance(message_object, dict) else None
         if uuid:
-          # Cache so HTTP endpoints can read it without polling Mongo
+          # Cache so HTTP endpoints can read it without polling Cassandra
           try:
             predictions_cache[uuid] = message_object
           except Exception:
@@ -651,18 +709,8 @@ def shutdown():
 if __name__ == "__main__":
     socketio.run(
       app,
-      debug=True,
-      host='0.0.0.0',
-      port=5001
-    )
-
-"""
-if __name__ == "__main__":
-    socketio.run(
-      app,
       debug=False,
       use_reloader=False,
       host="0.0.0.0",
       port=5001
     )
-"""

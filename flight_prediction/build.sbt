@@ -21,6 +21,6 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-streaming" % sparkVersion,
   "org.apache.spark" %% "spark-hive" % sparkVersion,
   "org.apache.spark" %% "spark-sql-kafka-0-10" % sparkVersion,
-  "org.mongodb.spark" %% "mongo-spark-connector" % "10.4.1"
+  "com.datastax.spark" %% "spark-cassandra-connector" % "3.5.0"
 
 )

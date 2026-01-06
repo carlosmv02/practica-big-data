@@ -1,5 +1,4 @@
 package es.upm.dit.ging.predictor
-import com.mongodb.spark._
 import org.apache.spark.ml.classification.RandomForestClassificationModel
 import org.apache.spark.ml.feature.{Bucketizer, StringIndexerModel, VectorAssembler}
 import org.apache.spark.sql.functions.{concat, from_json, lit, col, to_json, struct}
@@ -15,13 +14,18 @@ object MakePrediction {
       .builder
       .appName("StructuredNetworkWordCount")
       .master("local[*]")
+      .config("spark.cassandra.connection.host", sys.env.getOrElse("CASSANDRA_HOST", "cassandra"))
+      .config("spark.cassandra.connection.port", sys.env.getOrElse("CASSANDRA_PORT", "9042"))
       .getOrCreate()
     import spark.implicits._
 
     // Make locations and connection strings configurable for containers
     val modelBasePath = sys.env.getOrElse("MODEL_BASE_PATH", "/opt/models")
     val kafkaBootstrap = sys.env.getOrElse("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-    val mongoUri = sys.env.getOrElse("MONGO_URI", "mongodb://mongo:27017")
+    val cassandraHost = sys.env.getOrElse("CASSANDRA_HOST", "cassandra")
+    val cassandraPort = sys.env.getOrElse("CASSANDRA_PORT", "9042")
+    val cassandraKeyspace = sys.env.getOrElse("CASSANDRA_KEYSPACE", "agile_data_science")
+    val cassandraTable = sys.env.getOrElse("CASSANDRA_TABLE", "flight_delay_ml_response")
     val predictionRequestTopic = sys.env.getOrElse("PREDICTION_REQUEST_TOPIC", "flight-delay-ml-request")
     val predictionResponseTopic = sys.env.getOrElse("PREDICTION_RESPONSE_TOPIC", "flight-delay-ml-response")
     val checkpointBase = sys.env.getOrElse("CHECKPOINT_DIR", "/tmp")
@@ -143,18 +147,28 @@ object MakePrediction {
     // Inspect the output
     finalPredictions.printSchema()
 
-    // define a streaming query for MongoDB
-    val dataStreamWriter = finalPredictions
+    // define a streaming query for Cassandra using foreachBatch sink
+    val cassandraWriter = finalPredictions
       .writeStream
-      .format("mongodb")
-      .option("spark.mongodb.connection.uri", mongoUri)
-      .option("spark.mongodb.database", "agile_data_science")
-      .option("checkpointLocation", s"$checkpointBase/spark_checkpoint_mongo")
-      .option("spark.mongodb.collection", "flight_delay_ml_response")
+      .foreachBatch { (batchDf: DataFrame, _: Long) =>
+        batchDf.write
+          .format("org.apache.spark.sql.cassandra")
+          .options(
+            Map(
+              "keyspace" -> cassandraKeyspace,
+              "table" -> cassandraTable,
+              "spark.cassandra.connection.host" -> cassandraHost,
+              "spark.cassandra.connection.port" -> cassandraPort
+            )
+          )
+          .mode("append")
+          .save()
+      }
+      .option("checkpointLocation", s"$checkpointBase/spark_checkpoint_cassandra")
       .outputMode("append")
 
-    // run the query for MongoDB
-    val query = dataStreamWriter.start()
+    // run the query for Cassandra
+    val query = cassandraWriter.start()
     
     // Console Output for predictions
     val consoleOutput = finalPredictions.writeStream
@@ -174,7 +188,7 @@ object MakePrediction {
       .outputMode("append")
       .start()
 
-    println("Streaming jobs started: MongoDB, Console, and Kafka writer")
+    println("Streaming jobs started: Cassandra, Console, and Kafka writer")
     consoleOutput.awaitTermination()
   }
 
