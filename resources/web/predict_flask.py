@@ -13,6 +13,12 @@ import predict_utils
 # Set up Flask, Cassandra and Elasticsearch
 app = Flask(__name__)
 
+# Configure Content Security Policy to allow unsafe-eval for JavaScript
+@app.after_request
+def set_csp_header(response):
+    response.headers['Content-Security-Policy'] = "script-src 'self' 'unsafe-eval' 'unsafe-inline' cdnjs.cloudflare.com maxcdn.bootstrapcdn.com code.jquery.com d3js.org"
+    return response
+
 CASSANDRA_HOST = config.CASSANDRA_HOST
 CASSANDRA_PORT = config.CASSANDRA_PORT
 CASSANDRA_KEYSPACE = config.CASSANDRA_KEYSPACE

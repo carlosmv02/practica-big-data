@@ -123,8 +123,6 @@ services:
 
     volumes:
       - ./models:/opt/models:ro
-      # Este volumen se usa para persistir el caché de dependencias Ivy que Spark descarga
-      # cuando se usa `spark-submit --packages` (Kafka, Mongo connector, etc.).
       # Evita que Spark vuelva a descargar los JARs en cada arranque y previene errores
       # relacionados con rutas HOME inválidas en contenedores Docker.
       - ./data/ivy:/tmp/.ivy2
