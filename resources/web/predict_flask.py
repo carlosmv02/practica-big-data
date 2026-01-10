@@ -376,8 +376,22 @@ from os import environ
 
 
 project_home = os.environ["PROJECT_HOME"]
-vectorizer = joblib.load("{}/models/sklearn_vectorizer.pkl".format(project_home))
-regressor = joblib.load("{}/models/sklearn_regressor.pkl".format(project_home))
+
+# Try to load models if they exist, otherwise set them to None
+vectorizer = None
+regressor = None
+vectorizer_path = "{}/models/sklearn_vectorizer.pkl".format(project_home)
+regressor_path = "{}/models/sklearn_regressor.pkl".format(project_home)
+
+try:
+    if os.path.exists(vectorizer_path) and os.path.exists(regressor_path):
+        vectorizer = joblib.load(vectorizer_path)
+        regressor = joblib.load(regressor_path)
+        print(f"[Flask] Loaded models from {project_home}/models/")
+    else:
+        print(f"[Flask] Warning: Model files not found at {vectorizer_path} or {regressor_path}")
+except Exception as e:
+    print(f"[Flask] Warning: Could not load models: {e}")
 
 # Make our API a post, so a search engine wouldn't hit it
 @app.route("/flights/delays/predict/regress", methods=['POST'])
