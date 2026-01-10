@@ -94,6 +94,16 @@ def cassandra_insert(query, params=()):
 from pyelasticsearch import ElasticSearch
 elastic = ElasticSearch(config.ELASTIC_URL)
 
+# Initialize MongoDB client for distance lookups
+from pymongo import MongoClient
+try:
+    client = MongoClient('mongodb://localhost:27017/', serverSelectionTimeoutMS=5000)
+    client.server_info()  # Check if MongoDB is available
+    print("[Flask] Connected to MongoDB")
+except Exception as e:
+    print(f"[Flask] Warning: MongoDB not available: {e}")
+    client = None
+
 import json
 
 # Add SocketIO support

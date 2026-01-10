@@ -39,6 +39,16 @@ services:
     volumes:
       - ./data/kafka:/var/lib/kafka/data
 
+  mongodb:
+    image: mongo:7.0.17
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: agile_data_science
+    volumes:
+      - ./data/mongodb:/data/db
+
   flask:
     build:
       context: .
@@ -49,6 +59,8 @@ services:
         condition: service_started
       cassandra:
         condition: service_healthy
+      mongodb:
+        condition: service_started
     environment:
       CASSANDRA_HOST: cassandra
       CASSANDRA_PORT: 9042
